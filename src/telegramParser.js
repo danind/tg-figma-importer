@@ -101,7 +101,7 @@ export async function parseTelegramPost(url) {
     `[parseTelegramPost] ${embedUrl} -> httpStatus=${status} wrapFound=${wrap.length} bubbleFound=${messageBubble.length}`
   );
 
-  if (!wrap.length || !messageBubble.length) {
+  if (!messageBubble.length) {
     console.log('[parseTelegramPost] html snippet:', html.slice(0, 500));
     return { error: 'private_or_unavailable' };
   }

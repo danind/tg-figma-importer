@@ -12,9 +12,17 @@ export function parseTelegramLink(url) {
 
 async function fetchHtml(url) {
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TgFigmaImporter/1.0)' },
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      // Explicitly avoid Brotli — some versions of node-fetch don't decode it reliably.
+      'Accept-Encoding': 'gzip, deflate',
+    },
   });
-  return { status: res.status, html: await res.text() };
+  const html = await res.text();
+  console.log(`[fetchHtml] ${url} -> status ${res.status}, length ${html.length}`);
+  return { status: res.status, html };
 }
 
 async function toPngBase64(imageUrl) {
@@ -26,6 +34,7 @@ async function toPngBase64(imageUrl) {
     const png = await sharp(buf).png().toBuffer();
     return png.toString('base64');
   } catch (e) {
+    console.log('[toPngBase64] failed for', imageUrl, e.message);
     return null;
   }
 }
@@ -35,8 +44,6 @@ function extractBgUrl(style = '') {
   return m ? m[1] : null;
 }
 
-// Walks the DOM of the message text block and produces an ordered list of
-// "runs" describing plain text (with formatting flags) and custom emoji.
 function buildTextRuns($, container) {
   const runs = [];
 
@@ -51,8 +58,6 @@ function buildTextRuns($, container) {
     const tag = node.tagName?.toLowerCase();
     const el = $(node);
 
-    // Custom / regular emoji are rendered by the web preview as an <i class="emoji">
-    // with a background-image (static frame even for animated custom emoji).
     if (tag === 'i' && el.hasClass('emoji')) {
       const bgUrl = extractBgUrl(el.attr('style'));
       const fallback = el.find('b').text() || el.text();
@@ -86,15 +91,18 @@ export async function parseTelegramPost(url) {
   if (!parsed) return { error: 'invalid_link' };
 
   const embedUrl = `https://t.me/${parsed.channel}/${parsed.messageId}?embed=1`;
-  const { html } = await fetchHtml(embedUrl);
+  const { status, html } = await fetchHtml(embedUrl);
   const $ = cheerio.load(html);
 
   const wrap = $('.tgme_widget_message_wrap').first();
   const messageBubble = $('.tgme_widget_message').first();
 
-  // If the widget page doesn't contain the message block, the channel is
-  // private / doesn't allow public preview / the post doesn't exist.
+  console.log(
+    `[parseTelegramPost] ${embedUrl} -> httpStatus=${status} wrapFound=${wrap.length} bubbleFound=${messageBubble.length}`
+  );
+
   if (!wrap.length || !messageBubble.length) {
+    console.log('[parseTelegramPost] html snippet:', html.slice(0, 500));
     return { error: 'private_or_unavailable' };
   }
 
@@ -116,13 +124,11 @@ export async function parseTelegramPost(url) {
 
   const media = [];
 
-  // Photos
   $('.tgme_widget_message_photo_wrap').each((_, el) => {
     const bgUrl = extractBgUrl($(el).attr('style'));
     if (bgUrl) media.push({ type: 'photo', imageUrl: bgUrl });
   });
 
-  // Video: only the poster / first-frame thumbnail is taken, never the file itself
   $('.tgme_widget_message_video_wrap, .tgme_widget_message_video_player').each((_, el) => {
     const thumb = $(el).find('.tgme_widget_message_video_thumb, video').first();
     let bgUrl = extractBgUrl(thumb.attr('style'));
